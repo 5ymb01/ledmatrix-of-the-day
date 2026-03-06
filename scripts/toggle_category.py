@@ -6,6 +6,7 @@ Receives category_name and optional enabled state via stdin as JSON.
 
 import os
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,14 @@ if not category_name:
     }))
     sys.exit(1)
 
+# Validate category name characters
+if not re.fullmatch(r'[a-z0-9_-]+', category_name):
+    print(json.dumps({
+        'status': 'error',
+        'message': 'category_name must contain only lowercase letters, numbers, underscores, and hyphens'
+    }))
+    sys.exit(1)
+
 # Load current config
 config = {}
 try:
@@ -51,18 +60,30 @@ except (json.JSONDecodeError, ValueError) as e:
 plugin_config = config.get('of-the-day', {})
 categories = plugin_config.get('categories', {})
 
-# Check if category exists
+# Auto-register unknown categories
 if category_name not in categories:
-    print(json.dumps({
-        'status': 'error',
-        'message': f'Category "{category_name}" not found in config'
-    }))
-    sys.exit(1)
+    plugin_dir = Path(__file__).parent.parent
+    data_file = f'of_the_day/{category_name}.json'
+    display_name = category_name.replace('_', ' ').title()
+    categories[category_name] = {
+        'enabled': True,
+        'data_file': data_file,
+        'display_name': display_name,
+    }
+    category_order = plugin_config.get('category_order', [])
+    if category_name not in category_order:
+        category_order.append(category_name)
+    plugin_config['category_order'] = category_order
 
 # Determine new enabled state
 if 'enabled' in params:
-    # Explicit state provided
-    new_enabled = bool(params['enabled'])
+    enabled_value = params['enabled']
+    if isinstance(enabled_value, bool):
+        new_enabled = enabled_value
+    elif isinstance(enabled_value, str) and enabled_value.lower() in ('true', 'false'):
+        new_enabled = enabled_value.lower() == 'true'
+    else:
+        new_enabled = bool(enabled_value)
 else:
     # Toggle current state
     current_enabled = categories[category_name].get('enabled', True)
@@ -78,7 +99,7 @@ try:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     with open(config_file, 'w', encoding='utf-8') as f:
         json.dump(config, f, indent=2, ensure_ascii=False)
-except Exception as e:
+except (OSError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
         'message': f'Failed to save config: {str(e)}'

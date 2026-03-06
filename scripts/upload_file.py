@@ -27,6 +27,14 @@ try:
         }))
         sys.exit(1)
     
+    # Security: ensure filename doesn't contain path traversal
+    if '..' in filename or '/' in filename or '\\' in filename:
+        print(json.dumps({
+            'status': 'error',
+            'message': 'Invalid filename'
+        }))
+        sys.exit(1)
+
     # Validate filename
     if not filename.endswith('.json'):
         print(json.dumps({

@@ -12,19 +12,28 @@ from pathlib import Path
 # Get plugin directory (scripts/ -> plugin root)
 plugin_dir = Path(__file__).parent.parent
 data_dir = plugin_dir / 'of_the_day'
+data_dir.mkdir(parents=True, exist_ok=True)
 
 try:
     input_data = json.load(sys.stdin)
     filename = input_data.get('filename', '')
     content_str = input_data.get('content', '')
-    
+
     if not filename or not content_str:
         print(json.dumps({
             'status': 'error',
             'message': 'Filename and content are required'
         }))
         sys.exit(1)
-    
+
+    # Enforce .json extension before path checks
+    if not filename.endswith('.json'):
+        print(json.dumps({
+            'status': 'error',
+            'message': 'File must be a JSON file (.json)'
+        }))
+        sys.exit(1)
+
     # Security: ensure filename doesn't contain path traversal
     if '..' in filename or '/' in filename or '\\' in filename:
         print(json.dumps({
@@ -32,7 +41,7 @@ try:
             'message': 'Invalid filename'
         }))
         sys.exit(1)
-    
+
     # Validate JSON
     try:
         content = json.loads(content_str)

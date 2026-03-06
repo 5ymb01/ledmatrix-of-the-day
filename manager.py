@@ -16,16 +16,16 @@ API Version: 1.0.0
 
 import os
 import json
-import logging
 import time
 from datetime import date
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 
 from src.plugin_system.base_plugin import BasePlugin
+from src.logging_config import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OfTheDayPlugin(BasePlugin):
@@ -48,9 +48,9 @@ class OfTheDayPlugin(BasePlugin):
         super().__init__(plugin_id, config, display_manager, cache_manager, plugin_manager)
         
         # Configuration
-        self.update_interval = config.get('update_interval', 3600)
-        self.display_rotate_interval = config.get('display_rotate_interval', 20)
-        self.subtitle_rotate_interval = config.get('subtitle_rotate_interval', 10)
+        self.update_interval = self._get_positive_float(config, 'update_interval', 3600)
+        self.display_rotate_interval = self._get_positive_float(config, 'display_rotate_interval', 20)
+        self.subtitle_rotate_interval = self._get_positive_float(config, 'subtitle_rotate_interval', 10)
         
         # Categories
         self.categories = config.get('categories', {})
@@ -75,10 +75,14 @@ class OfTheDayPlugin(BasePlugin):
         
         # Colors
         self.title_color = (255, 255, 255)
-        self.subtitle_color = (200, 200, 200)
-        self.content_color = (180, 180, 180)
+        self.subtitle_color = (220, 220, 220)
+        self.content_color = (255, 220, 0)     # yellow — crisp & distinct from white title
         self.background_color = (0, 0, 0)
-        
+
+        # Cached fonts (loaded once to avoid per-frame disk I/O on Pi)
+        self._title_font: Optional[ImageFont.ImageFont] = None
+        self._body_font: Optional[ImageFont.ImageFont] = None
+
         # Load data files
         self._load_data_files()
         
@@ -90,7 +94,42 @@ class OfTheDayPlugin(BasePlugin):
         
         self.logger.info(f"Of The Day plugin initialized with {len(self.current_items)} categories")
     
-    def _register_fonts(self):
+    def _get_positive_float(self, config: Dict[str, Any], key: str, default: float) -> float:
+        """Coerce a config value to a positive float, falling back to default on invalid input."""
+        value = config.get(key, default)
+        try:
+            value_f = float(value)
+        except (TypeError, ValueError):
+            self.logger.warning(f"Invalid {key}='{value}', using default {default}")
+            return default
+        if value_f <= 0:
+            self.logger.warning(f"{key} must be > 0, using default {default}")
+            return default
+        return value_f
+
+    def _get_fonts(self) -> Tuple[ImageFont.ImageFont, ImageFont.ImageFont]:
+        """Return cached title and body fonts, loading them on first call."""
+        if self._title_font is None:
+            try:
+                self._title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
+            except OSError as e:
+                self.logger.warning(f"Failed to load PressStart2P font: {e}, using fallback")
+                self._title_font = (
+                    self.display_manager.small_font
+                    if hasattr(self.display_manager, 'small_font')
+                    else ImageFont.load_default()
+                )
+        if self._body_font is None:
+            self._body_font = getattr(self.display_manager, 'bdf_4x6_font', None)
+            if self._body_font is None:
+                self.logger.warning("bdf_4x6_font unavailable, falling back")
+                self._body_font = getattr(self.display_manager, 'bdf_5x7_font', None)
+                if self._body_font is None:
+                    self._body_font = getattr(self.display_manager, 'extra_small_font',
+                                              ImageFont.load_default())
+        return self._title_font, self._body_font
+
+    def _register_fonts(self) -> None:
         """Register fonts with the font manager."""
         try:
             if not hasattr(self.plugin_manager, 'font_manager'):
@@ -119,31 +158,57 @@ class OfTheDayPlugin(BasePlugin):
             self.logger.warning(f"Error registering fonts: {e}")
     
     def _load_data_files(self):
-        """Load all data files for enabled categories."""
+        """Load all data files for enabled categories.
+
+        Merges two sources:
+        1. Explicitly configured categories from self.categories (has data_file path).
+        2. Categories listed in self.category_order that are missing from self.categories
+           — these are auto-discovered using the conventional path
+           ``of_the_day/<category_name>.json`` so that files uploaded before a
+           config entry was created are still loaded.
+        """
+        categories_to_load = {}
+        for category_name in self.category_order:
+            if category_name in self.categories:
+                categories_to_load[category_name] = self.categories[category_name]
+            else:
+                self.logger.debug(
+                    f"Category '{category_name}' in category_order but missing from "
+                    f"categories config — auto-discovering data file."
+                )
+                categories_to_load[category_name] = {
+                    'enabled': True,
+                    'data_file': f'of_the_day/{category_name}.json',
+                    'display_name': category_name.replace('_', ' ').title(),
+                }
         for category_name, category_config in self.categories.items():
+            if category_name not in categories_to_load:
+                categories_to_load[category_name] = category_config
+
+        for category_name, category_config in categories_to_load.items():
             if not category_config.get('enabled', True):
                 self.logger.debug(f"Skipping disabled category: {category_name}")
                 continue
-            
+
             data_file = category_config.get('data_file')
             if not data_file:
                 self.logger.warning(f"No data file specified for category: {category_name}")
                 continue
-            
+
             try:
                 # Try to locate the data file
                 file_path = self._find_data_file(data_file)
                 if not file_path:
                     self.logger.warning(f"Could not find data file: {data_file}")
                     continue
-                
+
                 # Load and parse JSON
                 with open(file_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                
+
                 self.data_files[category_name] = data
                 self.logger.info(f"Loaded data for category '{category_name}': {len(data)} entries")
-                
+
             except Exception as e:
                 self.logger.error(f"Error loading data file for {category_name}: {e}")
     
@@ -405,19 +470,9 @@ class OfTheDayPlugin(BasePlugin):
         # Use display_manager's image and draw directly
         draw = self.display_manager.draw
         
-        # Load fonts - match old manager font usage
-        try:
-            title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
-        except Exception as e:
-            self.logger.warning(f"Failed to load PressStart2P font: {e}, using fallback")
-            title_font = self.display_manager.small_font if hasattr(self.display_manager, 'small_font') else ImageFont.load_default()
-        
-        try:
-            body_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-        except Exception as e:
-            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
-            body_font = self.display_manager.extra_small_font if hasattr(self.display_manager, 'extra_small_font') else ImageFont.load_default()
-        
+        # Load fonts (cached after first call to avoid per-frame disk I/O)
+        title_font, body_font = self._get_fonts()
+
         # Get font heights
         try:
             title_height = self.display_manager.get_font_height(title_font)
@@ -429,18 +484,22 @@ class OfTheDayPlugin(BasePlugin):
         except Exception as e:
             self.logger.warning(f"Error getting body font height: {e}, using default 8")
             body_height = 8
-        
-        # Layout matching old manager: margin_top = 8
-        margin_top = 8
+
+        # Per-category color overrides (fall back to plugin-wide defaults)
+        title_color    = tuple(category_config.get('title_color',    list(self.title_color)))
+        subtitle_color = tuple(category_config.get('subtitle_color', list(self.subtitle_color)))
+
+        # Layout: raise 5px so bottom text isn't clipped
+        margin_top = 3
         margin_bottom = 1
         underline_space = 1
-        
+
         # Get title/word (JSON uses "title" not "word")
         title = item_data.get('title', item_data.get('word', 'N/A'))
-        
+
         # Get subtitle (JSON uses "subtitle")
         subtitle = item_data.get('subtitle', item_data.get('pronunciation', item_data.get('type', '')))
-        
+
         # Calculate title width for centering
         try:
             title_width = self.display_manager.get_text_width(title, title_font)
@@ -451,11 +510,11 @@ class OfTheDayPlugin(BasePlugin):
                 title_width = bbox[2] - bbox[0]
             else:
                 title_width = len(title) * 6
-        
+
         # Center the title horizontally
         title_x = (self.display_manager.width - title_width) // 2
         title_y = margin_top
-        
+
         # Draw title using display_manager.draw_text (proper method)
         self.logger.info(f"Drawing title '{title}' at ({title_x}, {title_y}) with font type {type(title_font).__name__}")
         try:
@@ -463,36 +522,36 @@ class OfTheDayPlugin(BasePlugin):
                 title,
                 x=title_x,
                 y=title_y,
-                color=self.title_color,
+                color=title_color,
                 font=title_font
             )
             self.logger.debug(f"Title '{title}' drawn using display_manager.draw_text")
         except Exception as e:
             self.logger.error(f"Error drawing title '{title}': {e}", exc_info=True)
-        
+
         # Draw underline below title (like old manager)
         underline_y = title_y + title_height + 1
         underline_x_start = title_x
         underline_x_end = title_x + title_width
-        draw.line([(underline_x_start, underline_y), (underline_x_end, underline_y)], 
-                 fill=self.title_color, width=1)
-        
+        draw.line([(underline_x_start, underline_y), (underline_x_end, underline_y)],
+                 fill=title_color, width=1)
+
         # Draw subtitle below underline (centered, like old manager)
         if subtitle:
             # Wrap subtitle text if needed
             available_width = self.display_manager.width - 4
             wrapped_subtitle_lines = self._wrap_text(subtitle, available_width, body_font, max_lines=3)
             actual_subtitle_lines = [line for line in wrapped_subtitle_lines if line.strip()]
-            
+
             if actual_subtitle_lines:
                 # Calculate spacing - similar to old manager's dynamic spacing
                 total_subtitle_height = len(actual_subtitle_lines) * body_height
                 available_space = self.display_manager.height - underline_y - margin_bottom
                 space_after_underline = max(2, (available_space - total_subtitle_height) // 2)
-                
+
                 subtitle_start_y = underline_y + space_after_underline + underline_space
                 current_y = subtitle_start_y
-                
+
                 for line in actual_subtitle_lines:
                     if line.strip():
                         # Center each line of subtitle
@@ -505,17 +564,17 @@ class OfTheDayPlugin(BasePlugin):
                             else:
                                 line_width = len(line) * 6
                         line_x = (self.display_manager.width - line_width) // 2
-                        
+
                         # Use display_manager.draw_text for subtitle
                         self.display_manager.draw_text(
                             line,
                             x=line_x,
                             y=current_y,
-                            color=self.subtitle_color,
+                            color=subtitle_color,
                             font=body_font
                         )
                         current_y += body_height + 1
-        
+
         self.display_manager.update_display()
     
     def _display_content(self, category_config: Dict, item_data: Dict):
@@ -526,17 +585,9 @@ class OfTheDayPlugin(BasePlugin):
         # Use display_manager's image and draw directly
         draw = self.display_manager.draw
         
-        # Load fonts - match old manager
-        try:
-            title_font = ImageFont.truetype('assets/fonts/PressStart2P-Regular.ttf', 8)
-        except:
-            title_font = self.display_manager.small_font if hasattr(self.display_manager, 'small_font') else ImageFont.load_default()
-        
-        try:
-            body_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 6)
-        except:
-            body_font = self.display_manager.extra_small_font if hasattr(self.display_manager, 'extra_small_font') else ImageFont.load_default()
-        
+        # Load fonts (cached after first call to avoid per-frame disk I/O)
+        title_font, body_font = self._get_fonts()
+
         # Get font heights
         try:
             title_height = self.display_manager.get_font_height(title_font)
@@ -546,19 +597,23 @@ class OfTheDayPlugin(BasePlugin):
             body_height = self.display_manager.get_font_height(body_font)
         except Exception:
             body_height = 8
-        
-        # Layout matching old manager: margin_top = 8
-        margin_top = 8
+
+        # Per-category color overrides (fall back to plugin-wide defaults)
+        title_color   = tuple(category_config.get('title_color',   list(self.title_color)))
+        content_color = tuple(category_config.get('content_color', list(self.content_color)))
+
+        # Layout: raise 5px so bottom text isn't clipped
+        margin_top = 3
         margin_bottom = 1
         underline_space = 1
-        
+
         # Get title/word (JSON uses "title")
         title = item_data.get('title', item_data.get('word', 'N/A'))
         self.logger.debug(f"Displaying content for title: {title}")
-        
+
         # Get description (JSON uses "description")
         description = item_data.get('description', item_data.get('definition', item_data.get('content', item_data.get('text', 'No content'))))
-        
+
         # Calculate title width for centering (for underline placement)
         try:
             title_width = self.display_manager.get_text_width(title, title_font)
@@ -568,53 +623,53 @@ class OfTheDayPlugin(BasePlugin):
                 title_width = bbox[2] - bbox[0]
             else:
                 title_width = len(title) * 6
-        
+
         # Center the title horizontally (same position as in _display_title)
         title_x = (self.display_manager.width - title_width) // 2
         title_y = margin_top
-        
+
         # Draw title using display_manager.draw_text (same as title screen)
         self.display_manager.draw_text(
             title,
             x=title_x,
             y=title_y,
-            color=self.title_color,
+            color=title_color,
             font=title_font
         )
-        
+
         # Draw underline below title (same as title screen)
         underline_y = title_y + title_height + 1
         underline_x_start = title_x
         underline_x_end = title_x + title_width
-        draw.line([(underline_x_start, underline_y), (underline_x_end, underline_y)], 
-                 fill=self.title_color, width=1)
-        
+        draw.line([(underline_x_start, underline_y), (underline_x_end, underline_y)],
+                 fill=title_color, width=1)
+
         # Wrap description text
         available_width = self.display_manager.width - 4
         max_lines = 10
         wrapped_lines = self._wrap_text(description, available_width, body_font, max_lines=max_lines)
         actual_body_lines = [line for line in wrapped_lines if line.strip()]
-        
+
         if actual_body_lines:
             # Calculate dynamic spacing - similar to old manager
             num_body_lines = len(actual_body_lines)
             body_content_height = num_body_lines * body_height
             available_space = self.display_manager.height - underline_y - margin_bottom
-            
+
             if body_content_height < available_space:
                 # Distribute extra space: some after underline, rest between lines
                 extra_space = available_space - body_content_height
-                space_after_underline = max(2, int(extra_space * 0.3))
+                space_after_underline = max(1, int(extra_space * 0.15))
                 space_between_lines = max(1, int(extra_space * 0.7 / max(1, num_body_lines - 1))) if num_body_lines > 1 else 0
             else:
-                # Tight spacing
-                space_after_underline = 4
+                # Tight spacing — minimize gap to fit max lines
+                space_after_underline = 1
                 space_between_lines = 1
-            
+
             # Draw body text with dynamic spacing
-            body_start_y = underline_y + space_after_underline + underline_space + 1  # +1 to match old manager's shift
+            body_start_y = underline_y + space_after_underline + underline_space - 1
             current_y = body_start_y
-            
+
             for i, line in enumerate(actual_body_lines):
                 if line.strip():
                     # Center each line of body text (like old manager)
@@ -627,53 +682,57 @@ class OfTheDayPlugin(BasePlugin):
                         else:
                             line_width = len(line) * 6
                     line_x = (self.display_manager.width - line_width) // 2
-                    
+
                     # Use display_manager.draw_text for description
                     self.display_manager.draw_text(
                         line,
                         x=line_x,
                         y=current_y,
-                        color=self.subtitle_color,
+                        color=content_color,
                         font=body_font
                     )
-                    
+
                     # Move to next line position
                     if i < len(actual_body_lines) - 1:  # Not the last line
                         current_y += body_height + space_between_lines
-        
+
         self.display_manager.update_display()
     
     def _display_no_data(self):
         """Display message when no data is available."""
+        self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-        
+
         try:
             font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
             font = ImageFont.load_default()
-        
+
         draw.text((5, 12), "No Data", font=font, fill=(200, 200, 200))
-        
+
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
-    
+
     def _display_error(self):
         """Display error message."""
+        self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-        
+
         try:
             font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except:
+        except OSError as e:
+            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
             font = ImageFont.load_default()
-        
+
         draw.text((5, 12), "Error", font=font, fill=(255, 0, 0))
-        
+
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
     
@@ -698,9 +757,9 @@ class OfTheDayPlugin(BasePlugin):
 
         # Update configuration
         self.config = config
-        self.update_interval = config.get('update_interval', 3600)
-        self.display_rotate_interval = config.get('display_rotate_interval', 20)
-        self.subtitle_rotate_interval = config.get('subtitle_rotate_interval', 10)
+        self.update_interval = self._get_positive_float(config, 'update_interval', 3600)
+        self.display_rotate_interval = self._get_positive_float(config, 'display_rotate_interval', 20)
+        self.subtitle_rotate_interval = self._get_positive_float(config, 'subtitle_rotate_interval', 10)
         self.categories = config.get('categories', {})
         self.category_order = config.get('category_order', [])
 

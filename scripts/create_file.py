@@ -6,6 +6,7 @@ Automatically adds category to config.
 
 import os
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -26,11 +27,11 @@ try:
         }))
         sys.exit(1)
     
-    # Validate category name (alphanumeric + underscores)
-    if not category_name.replace('_', '').isalnum():
+    # Validate category name (lowercase alphanumeric, underscores, hyphens)
+    if not re.fullmatch(r'[a-z0-9_-]+', category_name):
         print(json.dumps({
             'status': 'error',
-            'message': 'Category name must contain only letters, numbers, and underscores'
+            'message': 'Category name must contain only lowercase letters, numbers, underscores, and hyphens'
         }))
         sys.exit(1)
     
