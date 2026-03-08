@@ -20,12 +20,8 @@ import time
 from datetime import date
 from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
-from pathlib import Path
 
 from src.plugin_system.base_plugin import BasePlugin
-from src.logging_config import get_logger
-
-logger = get_logger(__name__)
 
 
 class OfTheDayPlugin(BasePlugin):
@@ -82,6 +78,7 @@ class OfTheDayPlugin(BasePlugin):
         # Cached fonts (loaded once to avoid per-frame disk I/O on Pi)
         self._title_font: Optional[ImageFont.ImageFont] = None
         self._body_font: Optional[ImageFont.ImageFont] = None
+        self._small_font: Optional[ImageFont.ImageFont] = None
 
         # Load data files
         self._load_data_files()
@@ -129,6 +126,16 @@ class OfTheDayPlugin(BasePlugin):
                                               ImageFont.load_default())
         return self._title_font, self._body_font
 
+    def _get_small_font(self) -> ImageFont.ImageFont:
+        """Return cached small font for error/no-data displays, loading on first call."""
+        if self._small_font is None:
+            try:
+                self._small_font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
+            except OSError as e:
+                self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
+                self._small_font = ImageFont.load_default()
+        return self._small_font
+
     def _register_fonts(self) -> None:
         """Register fonts with the font manager."""
         try:
@@ -154,7 +161,7 @@ class OfTheDayPlugin(BasePlugin):
             )
             
             self.logger.info("Of The Day fonts registered")
-        except Exception as e:
+        except (AttributeError, OSError, ValueError) as e:
             self.logger.warning(f"Error registering fonts: {e}")
     
     def _load_data_files(self):
@@ -209,26 +216,35 @@ class OfTheDayPlugin(BasePlugin):
                 self.data_files[category_name] = data
                 self.logger.info(f"Loaded data for category '{category_name}': {len(data)} entries")
 
-            except Exception as e:
+            except (json.JSONDecodeError, OSError, KeyError, ValueError) as e:
                 self.logger.error(f"Error loading data file for {category_name}: {e}")
     
     def _find_data_file(self, data_file: str) -> Optional[str]:
-        """Find the data file in possible locations."""
+        """Find the data file in possible locations.
+
+        Only searches within the plugin directory and the project CWD to
+        prevent arbitrary filesystem reads from config values.
+        """
         # Get plugin directory
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
-        
-        # Possible paths to check (prioritize plugin directory)
+
+        # Possible paths to check (all confined to known directories)
         possible_paths = [
             os.path.join(plugin_dir, data_file),  # In plugin directory (preferred)
-            data_file,  # Direct path (if absolute)
-            os.path.join(os.getcwd(), data_file),  # Relative to cwd (fallback)
+            os.path.join(os.getcwd(), data_file),  # Relative to project root (fallback)
         ]
-        
+
         for path in possible_paths:
-            if os.path.exists(path):
-                self.logger.info(f"Found data file at: {path}")
-                return path
-        
+            resolved = os.path.realpath(path)
+            # Ensure resolved path stays within plugin dir or project root
+            if not (resolved.startswith(os.path.realpath(plugin_dir))
+                    or resolved.startswith(os.path.realpath(os.getcwd()))):
+                self.logger.warning(f"Data file path escapes allowed directories: {data_file}")
+                continue
+            if os.path.exists(resolved):
+                self.logger.debug(f"Found data file at: {resolved}")
+                return resolved
+
         self.logger.warning(f"Data file not found: {data_file}")
         return None
     
@@ -258,7 +274,7 @@ class OfTheDayPlugin(BasePlugin):
                 else:
                     self.logger.warning(f"No entry found for day {day_of_year} in category {category_name}")
             
-            except Exception as e:
+            except (KeyError, TypeError, ValueError) as e:
                 self.logger.error(f"Error loading today's item for {category_name}: {e}")
     
     def update(self) -> None:
@@ -516,7 +532,7 @@ class OfTheDayPlugin(BasePlugin):
         title_y = margin_top
 
         # Draw title using display_manager.draw_text (proper method)
-        self.logger.info(f"Drawing title '{title}' at ({title_x}, {title_y}) with font type {type(title_font).__name__}")
+        self.logger.debug(f"Drawing title '{title}' at ({title_x}, {title_y}) with font type {type(title_font).__name__}")
         try:
             self.display_manager.draw_text(
                 title,
@@ -698,41 +714,27 @@ class OfTheDayPlugin(BasePlugin):
 
         self.display_manager.update_display()
     
-    def _display_no_data(self):
+    def _display_no_data(self) -> None:
         """Display message when no data is available."""
         self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-
-        try:
-            font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except OSError as e:
-            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
-            font = ImageFont.load_default()
-
+        font = self._get_small_font()
         draw.text((5, 12), "No Data", font=font, fill=(200, 200, 200))
-
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
 
-    def _display_error(self):
+    def _display_error(self) -> None:
         """Display error message."""
         self.display_manager.clear()
         img = Image.new('RGB', (self.display_manager.width,
                                self.display_manager.height),
                        self.background_color)
         draw = ImageDraw.Draw(img)
-
-        try:
-            font = ImageFont.truetype('assets/fonts/4x6-font.ttf', 8)
-        except OSError as e:
-            self.logger.warning(f"Failed to load 4x6 font: {e}, using fallback")
-            font = ImageFont.load_default()
-
+        font = self._get_small_font()
         draw.text((5, 12), "Error", font=font, fill=(255, 0, 0))
-
         self.display_manager.image = img.copy()
         self.display_manager.update_display()
     

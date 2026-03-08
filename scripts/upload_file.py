@@ -57,7 +57,7 @@ try:
     if not isinstance(data, dict):
         print(json.dumps({
             'status': 'error',
-            'message': 'JSON must be an object with day numbers (1-365) as keys'
+            'message': 'JSON must be an object with day numbers (1-366) as keys'
         }))
         sys.exit(1)
     
@@ -65,16 +65,16 @@ try:
     for key in data.keys():
         try:
             day_num = int(key)
-            if day_num < 1 or day_num > 365:
+            if day_num < 1 or day_num > 366:
                 print(json.dumps({
                     'status': 'error',
-                    'message': f'Day number {day_num} is out of range (must be 1-365)'
+                    'message': f'Day number {day_num} is out of range (must be 1-366)'
                 }))
                 sys.exit(1)
         except ValueError:
             print(json.dumps({
                 'status': 'error',
-                'message': f'Invalid key "{key}": must be a day number (1-365)'
+                'message': f'Invalid key "{key}": must be a day number (1-366)'
             }))
             sys.exit(1)
     
@@ -83,8 +83,18 @@ try:
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     
-    # Extract category name and update config
+    # Extract and validate category name
     category_name = filename.replace('.json', '')
+
+    # Validate category name (lowercase alphanumeric, underscores, hyphens)
+    import re
+    if not re.fullmatch(r'[a-z0-9_-]+', category_name):
+        print(json.dumps({
+            'status': 'error',
+            'message': 'Category name must contain only lowercase letters, numbers, underscores, and hyphens'
+        }))
+        sys.exit(1)
+
     display_name = input_data.get('display_name', category_name.replace('_', ' ').title())
     
     # Update config
@@ -99,10 +109,10 @@ try:
         'category_name': category_name
     }))
     
-except Exception as e:
+except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': str(e)
+        'message': f'Failed to upload file: {type(e).__name__}'
     }))
     sys.exit(1)
 

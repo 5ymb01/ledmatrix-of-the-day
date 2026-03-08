@@ -24,6 +24,14 @@ try:
         }))
         sys.exit(1)
     
+    # Enforce .json extension
+    if not filename.endswith('.json'):
+        print(json.dumps({
+            'status': 'error',
+            'message': 'File must be a JSON file (.json)'
+        }))
+        sys.exit(1)
+
     # Security: ensure filename doesn't contain path traversal
     if '..' in filename or '/' in filename or '\\' in filename:
         print(json.dumps({
@@ -31,7 +39,7 @@ try:
             'message': 'Invalid filename'
         }))
         sys.exit(1)
-    
+
     file_path = data_dir / filename
     
     if not file_path.exists():
@@ -57,10 +65,10 @@ try:
         'message': f'File {filename} deleted successfully'
     }))
     
-except Exception as e:
+except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': str(e)
+        'message': f'Failed to delete file: {type(e).__name__}'
     }))
     sys.exit(1)
 

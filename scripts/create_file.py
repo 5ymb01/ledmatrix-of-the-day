@@ -71,10 +71,10 @@ try:
         'category_name': category_name
     }))
     
-except Exception as e:
+except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': str(e)
+        'message': f'Failed to create file: {type(e).__name__}'
     }))
     sys.exit(1)
 
