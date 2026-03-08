@@ -22,8 +22,7 @@ try:
     if stdin_input:
         params = json.loads(stdin_input)
 except (json.JSONDecodeError, ValueError):
-    # No params or invalid JSON, continue without params
-    params = {}
+    params = {}  # stdin params are optional; default to empty on parse failure
 
 # Load config to get enabled status for each category
 config = {}
@@ -32,7 +31,7 @@ try:
         with open(config_file, 'r', encoding='utf-8') as f:
             config = json.load(f)
 except (json.JSONDecodeError, ValueError):
-    config = {}
+    config = {}  # config is optional; default to empty on parse failure
 
 # Get plugin categories config
 plugin_config = config.get('of-the-day', {})
@@ -73,9 +72,8 @@ for file_path in data_dir.glob('*.json'):
             'entry_count': entry_count,
             'enabled': enabled
         })
-    except (json.JSONDecodeError, OSError, ValueError) as e:
-        # Skip files that can't be read/parsed
-        continue
+    except (json.JSONDecodeError, OSError, ValueError):
+        continue  # skip unreadable/unparseable files in listing
 
 # Sort by filename
 files.sort(key=lambda x: x['filename'])

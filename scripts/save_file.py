@@ -48,7 +48,7 @@ try:
     except json.JSONDecodeError as e:
         print(json.dumps({
             'status': 'error',
-            'message': f'Invalid JSON: {str(e)}'
+            'message': 'Invalid JSON format'
         }))
         sys.exit(1)
     

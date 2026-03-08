@@ -23,7 +23,7 @@ try:
 except (json.JSONDecodeError, ValueError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': f'Invalid JSON input: {str(e)}'
+        'message': f'Invalid JSON input: {type(e).__name__}'
     }))
     sys.exit(1)
 
@@ -52,7 +52,7 @@ try:
 except (json.JSONDecodeError, ValueError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': f'Failed to load config: {str(e)}'
+        'message': f'Failed to load config: {type(e).__name__}'
     }))
     sys.exit(1)
 
@@ -102,7 +102,7 @@ try:
 except (OSError, TypeError) as e:
     print(json.dumps({
         'status': 'error',
-        'message': f'Failed to save config: {str(e)}'
+        'message': f'Failed to save config: {type(e).__name__}'
     }))
     sys.exit(1)
 

@@ -228,6 +228,11 @@ class OfTheDayPlugin(BasePlugin):
         # Get plugin directory
         plugin_dir = os.path.dirname(os.path.abspath(__file__))
 
+        # Reject absolute paths to prevent arbitrary filesystem reads
+        if os.path.isabs(data_file):
+            self.logger.warning("Rejecting absolute data file path: %s", data_file)
+            return None
+
         # Possible paths to check (all confined to known directories)
         possible_paths = [
             os.path.join(plugin_dir, data_file),  # In plugin directory (preferred)
@@ -432,7 +437,8 @@ class OfTheDayPlugin(BasePlugin):
             try:
                 import freetype
             except ImportError:
-                # If freetype not available, fallback to PIL
+                # freetype not available, fallback to PIL rendering
+                self.logger.debug("freetype not available, using PIL fallback")
                 draw.text((x, y), text, fill=color, font=ImageFont.load_default())
                 return
             
@@ -471,7 +477,7 @@ class OfTheDayPlugin(BasePlugin):
                                             0 <= pixel_y < self.display_manager.height):
                                             draw.point((pixel_x, pixel_y), fill=color)
                             except IndexError:
-                                continue
+                                continue  # pixel out of glyph bitmap bounds
                     current_x += font.glyph.advance.x >> 6
         except (AttributeError, TypeError, IndexError, OSError) as e:
             self.logger.error(f"Error in _draw_bdf_text for text '{text}' at ({x}, {y}): {e}", exc_info=True)
