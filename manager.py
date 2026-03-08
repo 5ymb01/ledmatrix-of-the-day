@@ -362,7 +362,7 @@ class OfTheDayPlugin(BasePlugin):
                 else:
                     self._display_content(category_config, item_data)
         
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError, OSError) as e:
             self.logger.error(f"Error displaying of-the-day: {e}")
             if self.last_displayed_category != "ERROR":
                 self.last_displayed_category = "ERROR"
@@ -379,8 +379,9 @@ class OfTheDayPlugin(BasePlugin):
             test_line = ' '.join(current_line + [word]) if current_line else word
             try:
                 text_width = self.display_manager.get_text_width(test_line, font)
-            except Exception:
+            except (AttributeError, TypeError, OSError) as e:
                 # Fallback calculation
+                self.logger.debug("get_text_width fallback for wrap: %s", e)
                 if isinstance(font, ImageFont.ImageFont):
                     bbox = font.getbbox(test_line)
                     text_width = bbox[2] - bbox[0]
@@ -398,7 +399,8 @@ class OfTheDayPlugin(BasePlugin):
                     while len(truncated) > 0:
                         try:
                             test_width = self.display_manager.get_text_width(truncated + "...", font)
-                        except Exception:
+                        except (AttributeError, TypeError, OSError) as e:
+                            self.logger.debug("get_text_width fallback for truncation: %s", e)
                             if isinstance(font, ImageFont.ImageFont):
                                 bbox = font.getbbox(truncated + "...")
                                 test_width = bbox[2] - bbox[0]
@@ -439,7 +441,8 @@ class OfTheDayPlugin(BasePlugin):
                 # Compute baseline from font ascender so caller can pass top-left y
                 try:
                     ascender_px = font.size.ascender >> 6
-                except Exception:
+                except (AttributeError, TypeError) as e:
+                    self.logger.debug("Failed to read font ascender: %s", e)
                     ascender_px = 0
                 baseline_y = y + ascender_px
                 
@@ -470,12 +473,12 @@ class OfTheDayPlugin(BasePlugin):
                             except IndexError:
                                 continue
                     current_x += font.glyph.advance.x >> 6
-        except Exception as e:
+        except (AttributeError, TypeError, IndexError, OSError) as e:
             self.logger.error(f"Error in _draw_bdf_text for text '{text}' at ({x}, {y}): {e}", exc_info=True)
             # Fallback to simple text drawing
             try:
                 draw.text((x, y), text, fill=color, font=ImageFont.load_default())
-            except Exception as fallback_e:
+            except (AttributeError, TypeError, OSError) as fallback_e:
                 self.logger.error(f"Fallback text drawing also failed: {fallback_e}", exc_info=True)
     
     def _display_title(self, category_config: Dict, item_data: Dict):
@@ -492,12 +495,12 @@ class OfTheDayPlugin(BasePlugin):
         # Get font heights
         try:
             title_height = self.display_manager.get_font_height(title_font)
-        except Exception as e:
+        except (AttributeError, TypeError, OSError) as e:
             self.logger.warning(f"Error getting title font height: {e}, using default 8")
             title_height = 8
         try:
             body_height = self.display_manager.get_font_height(body_font)
-        except Exception as e:
+        except (AttributeError, TypeError, OSError) as e:
             self.logger.warning(f"Error getting body font height: {e}, using default 8")
             body_height = 8
 
@@ -519,7 +522,7 @@ class OfTheDayPlugin(BasePlugin):
         # Calculate title width for centering
         try:
             title_width = self.display_manager.get_text_width(title, title_font)
-        except Exception as e:
+        except (AttributeError, TypeError, OSError) as e:
             self.logger.warning(f"Error calculating title width using display_manager: {e}, trying fallback")
             if isinstance(title_font, ImageFont.ImageFont):
                 bbox = title_font.getbbox(title)
@@ -542,7 +545,7 @@ class OfTheDayPlugin(BasePlugin):
                 font=title_font
             )
             self.logger.debug(f"Title '{title}' drawn using display_manager.draw_text")
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError, OSError) as e:
             self.logger.error(f"Error drawing title '{title}': {e}", exc_info=True)
 
         # Draw underline below title (like old manager)
@@ -573,7 +576,8 @@ class OfTheDayPlugin(BasePlugin):
                         # Center each line of subtitle
                         try:
                             line_width = self.display_manager.get_text_width(line, body_font)
-                        except Exception:
+                        except (AttributeError, TypeError, OSError) as e:
+                            self.logger.debug("get_text_width fallback for subtitle line: %s", e)
                             if isinstance(body_font, ImageFont.ImageFont):
                                 bbox = body_font.getbbox(line)
                                 line_width = bbox[2] - bbox[0]
@@ -607,11 +611,13 @@ class OfTheDayPlugin(BasePlugin):
         # Get font heights
         try:
             title_height = self.display_manager.get_font_height(title_font)
-        except Exception:
+        except (AttributeError, TypeError, OSError) as e:
+            self.logger.debug("get_font_height fallback for title in content view: %s", e)
             title_height = 8
         try:
             body_height = self.display_manager.get_font_height(body_font)
-        except Exception:
+        except (AttributeError, TypeError, OSError) as e:
+            self.logger.debug("get_font_height fallback for body in content view: %s", e)
             body_height = 8
 
         # Per-category color overrides (fall back to plugin-wide defaults)
@@ -633,7 +639,8 @@ class OfTheDayPlugin(BasePlugin):
         # Calculate title width for centering (for underline placement)
         try:
             title_width = self.display_manager.get_text_width(title, title_font)
-        except Exception:
+        except (AttributeError, TypeError, OSError) as e:
+            self.logger.debug("get_text_width fallback for title in content view: %s", e)
             if isinstance(title_font, ImageFont.ImageFont):
                 bbox = title_font.getbbox(title)
                 title_width = bbox[2] - bbox[0]
@@ -691,7 +698,8 @@ class OfTheDayPlugin(BasePlugin):
                     # Center each line of body text (like old manager)
                     try:
                         line_width = self.display_manager.get_text_width(line, body_font)
-                    except Exception:
+                    except (AttributeError, TypeError, OSError) as e:
+                        self.logger.debug("get_text_width fallback for content line: %s", e)
                         if isinstance(body_font, ImageFont.ImageFont):
                             bbox = body_font.getbbox(line)
                             line_width = bbox[2] - bbox[0]
