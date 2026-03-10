@@ -463,10 +463,19 @@
         let fileToDelete = null;
 
         // Initialize on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            loadFiles();
-            setupDragAndDrop();
-        });
+        // Widget is injected dynamically after DOMContentLoaded has already
+        // fired, so check readyState and run immediately if DOM is ready.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                loadFiles();
+                setupDragAndDrop();
+            });
+        } else {
+            setTimeout(function() {
+                loadFiles();
+                setupDragAndDrop();
+            }, 50);
+        }
 
         // Setup drag and drop visual feedback
         function setupDragAndDrop() {
