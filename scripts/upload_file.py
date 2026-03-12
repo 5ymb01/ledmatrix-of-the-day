@@ -78,12 +78,7 @@ try:
             }))
             sys.exit(1)
     
-    # Save file
-    file_path = data_dir / filename
-    with open(file_path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    
-    # Extract and validate category name
+    # Extract and validate category name before writing file
     category_name = filename.replace('.json', '')
 
     # Validate category name (lowercase alphanumeric, underscores, hyphens)
@@ -96,6 +91,11 @@ try:
         sys.exit(1)
 
     display_name = input_data.get('display_name', category_name.replace('_', ' ').title())
+
+    # Save file (after all validation passes)
+    file_path = data_dir / filename
+    with open(file_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
     
     # Update config
     sys.path.insert(0, str(plugin_dir))

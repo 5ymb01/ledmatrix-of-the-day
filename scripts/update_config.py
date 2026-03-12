@@ -15,15 +15,23 @@ def load_config():
     """Load the main configuration file."""
     if not config_file.exists():
         return {}
-    
-    with open(config_file, 'r', encoding='utf-8') as f:
-        return json.load(f)
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Config file contains invalid JSON: {e}") from e
+    except OSError as e:
+        raise OSError(f"Failed to read config file {config_file}: {e}") from e
 
 def save_config(config):
     """Save the configuration file."""
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_file, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    try:
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        raise OSError(f"Failed to write config file {config_file}: {e}") from e
 
 def add_category_to_config(category_name, data_file, display_name):
     """Add a category to the plugin configuration."""
